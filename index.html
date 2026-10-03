@@ -1,0 +1,98 @@
+<!doctype html>
+<!-- vampireliquor Kick sub counter (standalone side project).
+     OBS Browser Source: URL below, width 420, height 90.
+     params: goal=150 | start=15 | label=SUBS | reset=1 | test=1 -->
+<meta charset="utf-8">
+<title>vampireliquor subs</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;background:transparent;overflow:hidden}
+  #box{display:inline-flex;align-items:center;gap:10px;margin:8px;
+       font-family:"Cinzel",Georgia,serif;color:#f3e6d0;
+       text-shadow:0 0 3px #000,0 1px 2px #000,0 0 8px #000}
+  #fangs{width:38px;height:30px;filter:drop-shadow(0 0 3px #000)}
+  #top{display:flex;align-items:baseline;gap:7px;line-height:1}
+  #label{font-size:13px;letter-spacing:.25em;color:#e0313d;font-weight:700}
+  #num{font-size:26px;font-weight:900;display:inline-block}
+  #goal{font-size:16px;color:#d9c6a8}
+  #bar{width:260px;height:9px;margin-top:5px;background:#00000070;border:1px solid #8b1a1a;border-radius:5px;overflow:hidden}
+  #fill{height:100%;width:0;background:linear-gradient(90deg,#6b0f14,#e0313d);box-shadow:0 0 8px #e0313d;transition:width .8s}
+  .pop #num{animation:pop .7s ease-out}
+  .pop #fill{animation:flash 1s ease-out}
+  @keyframes pop{0%{transform:scale(1.5);color:#ff4d5a}100%{transform:scale(1)}}
+  @keyframes flash{0%{filter:brightness(2)}100%{filter:none}}
+  #gift{display:inline-block;font-size:13px;font-weight:900;color:#ff4d5a;letter-spacing:.1em;opacity:0;margin-left:4px}
+  #gift.show{animation:gift 2.6s ease-out}
+  @keyframes gift{0%{opacity:0;transform:scale(1.6)}10%{opacity:1;transform:scale(1)}20%{opacity:.4}30%{opacity:1}75%{opacity:1}100%{opacity:0}}
+  #status{position:fixed;bottom:0;left:6px;font:10px sans-serif;color:#f55;text-shadow:0 0 3px #000}
+</style>
+<div id="box">
+  <svg id="fangs" viewBox="0 0 40 30" aria-hidden="true">
+    <path d="M2 4 Q20 12 38 4 Q38 9 34 10 Q20 16 6 10 Q2 9 2 4Z" fill="#8b1a1a"/>
+    <path d="M9 10.5 L12 24 L15 12.2Z M25 12.2 L28 24 L31 10.5Z" fill="#f3e6d0" stroke="#2a0a0e" stroke-width=".8"/>
+    <circle cx="28" cy="26.5" r="1.8" fill="#e0313d"/>
+  </svg>
+  <div>
+    <div id="top"><span id="label"></span><span id="num">0</span><span id="goal"></span><span id="gift"></span></div>
+    <div id="bar"><div id="fill"></div></div>
+  </div>
+</div>
+<div id="status"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const slug = 'vampireliquor';
+const goal = +(q.get('goal') || 150);
+const KEY = 'kicksubs:' + slug;
+if (q.has('reset')) localStorage.removeItem(KEY);
+// ponytail: count lives in OBS's localStorage (survives refresh); fix it with ?reset=1&start=N, then drop the params
+let count = +(localStorage.getItem(KEY) ?? q.get('start') ?? 15);
+const $ = id => document.getElementById(id);
+$('label').textContent = q.get('label') ?? 'SUBS';
+const status = t => $('status').textContent = t;
+
+function render(bump) {
+  $('num').textContent = count;
+  $('goal').textContent = '/ ' + goal;
+  $('fill').style.width = Math.min(100, count / goal * 100) + '%';
+  localStorage.setItem(KEY, count);
+  if (bump) { const b = $('box'); b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
+}
+
+// How many subs an event adds (0 = not a sub event). Kick double-encodes `data`.
+function subsFrom(event, data) {
+  if (typeof data === 'string') try { data = JSON.parse(data) } catch { return 0 }
+  if (event === 'App\\Events\\SubscriptionEvent') return 1;
+  if (event === 'App\\Events\\GiftedSubscriptionsEvent') return (data.gifted_usernames || []).length || 1;
+  return 0;
+}
+
+function handle(raw) {
+  const m = JSON.parse(raw);
+  if (m.event === 'pusher:ping') return ws.send('{"event":"pusher:pong","data":{}}');
+  if (m.event === 'pusher_internal:subscription_succeeded') return status('');
+  const n = subsFrom(m.event, m.data);
+  if (n) { count += n; render(true); }
+  if (n && m.event.endsWith('GiftedSubscriptionsEvent')) gifted(n);
+}
+
+function gifted(n) {
+  const g = $('gift'); g.textContent = '+' + n + ' GIFTED';
+  g.classList.remove('show'); void g.offsetWidth; g.classList.add('show');
+}
+
+let ws, chatroom = 72252222;  // vampireliquor's chatroom id (kick.com/api/v2/channels/vampireliquor)
+function connect() {
+  ws = new WebSocket('wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0&flash=false');
+  ws.onopen = () => ws.send(JSON.stringify({event:'pusher:subscribe',data:{auth:'',channel:`chatrooms.${chatroom}.v2`}}));
+  ws.onmessage = e => handle(e.data);
+  ws.onclose = () => { status('reconnecting…'); setTimeout(connect, 3000); };
+}
+
+render(false);
+if (q.has('test')) {  // self-check: ?test=1 → title PASS/FAIL
+  const ok = subsFrom('App\\Events\\SubscriptionEvent', '{"username":"a","months":1}') === 1
+    && subsFrom('App\\Events\\GiftedSubscriptionsEvent', '{"gifted_usernames":["a","b","c"],"gifter_username":"g"}') === 3
+    && subsFrom('App\\Events\\ChatMessageEvent', '{"content":"hi"}') === 0;
+  document.title = ok ? 'PASS' : 'FAIL';
+} else connect();
+</script>
